@@ -17,7 +17,7 @@ except NameError:
 
 PROJECT_ROOT = APP_DIR
 # THIS PATH NOW POINTS TO THE PRE-PROCESSED EXCEL FILE
-MNEMONICS_XLSX_PATH = PROJECT_ROOT / "QUIZ" / "Mnemonics_Markdown.xlsx" 
+MNEMONICS_XLSX_PATH = PROJECT_ROOT / "QUIZ" / "Mnemonics_Highlighted.xlsx" # New
 IMAGE_CSV_PATH = PROJECT_ROOT / "QUIZ" / "github_image_urls_CATEGORIZED.csv"
 
 # --- Load Mnemonics Data (Simplified to read pre-processed file) ---
@@ -290,7 +290,7 @@ if __name__ == "__main__":
                         st.success("Correct! ✅")
                     else:
                         st.error(f"Incorrect! ❌ La bonne réponse est : **{correct_med_name_active}**")
-                    st.markdown(f"💡 Mnémonique: {correct_mnemonic_with_markdown}", unsafe_allow_html=False) 
+                    st.markdown(f"💡 Mnémonique: {correct_mnemonic_with_html_highlight}", unsafe_allow_html=True)
             
             st.markdown("---")
             nav_prev_col, nav_next_col = st.columns(2)
@@ -414,7 +414,7 @@ if __name__ == "__main__":
                             st.write(f"Bonne réponse : **{correct_ans_detail}**")
                         elif user_ans_detail == "Non Répondu":
                             st.write(f"Bonne réponse : **{correct_ans_detail}**")
-                        st.markdown(f"💡 Mnémonique: {mnemonic_with_markdown_detail}", unsafe_allow_html=False)
+                        st.markdown(f"💡 Mnémonique: {mnemonic_with_html_highlight_detail}", unsafe_allow_html=True)
                     st.divider()
 
     elif not st.session_state.quiz_loaded:
