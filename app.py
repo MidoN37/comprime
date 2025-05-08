@@ -2,8 +2,9 @@ import streamlit as st
 import pandas as pd
 import random
 import unicodedata
-import re # Keep for potential future use, though not directly used in current normalization
+# import re # Not strictly needed in this version of app.py if pre-processing handles all string manipulation
 from pathlib import Path
+# openpyxl is still needed by pandas.read_excel(), so ensure it's in requirements.txt
 
 # --- Page Config ---
 st.set_page_config(layout="wide", page_title="Pharm Mnemonics Quiz")
@@ -15,37 +16,50 @@ except NameError:
     APP_DIR = Path.cwd()
 
 PROJECT_ROOT = APP_DIR
-# IMPORTANT: If Mnemonics.xlsx is NOT in your project's QUIZ folder,
-# update this path to its absolute location or ensure it's copied.
-# For portability, having it in the project is best.
-MNEMONICS_XLSX_PATH = PROJECT_ROOT / "QUIZ" / "Mnemonics.xlsx"
+# THIS PATH NOW POINTS TO THE PRE-PROCESSED EXCEL FILE
+MNEMONICS_XLSX_PATH = PROJECT_ROOT / "QUIZ" / "Mnemonics_Markdown.xlsx" 
 IMAGE_CSV_PATH = PROJECT_ROOT / "QUIZ" / "github_image_urls_CATEGORIZED.csv"
 
-# --- Load Mnemonics Data ---
+# --- Load Mnemonics Data (Simplified to read pre-processed file) ---
 @st.cache_data(show_spinner="Loading mnemonics data...")
 def load_mnemonics_data(path):
     try:
         if not path.exists():
-            st.error(f"Mnemonics data XLSX not found: {path}")
-            st.error("Please ensure 'Mnemonics.xlsx' is in the 'QUIZ' subfolder of your project, or update MNEMONICS_XLSX_PATH in the script.")
+            st.error(f"Processed mnemonics data XLSX not found: {path}")
+            st.error("Please ensure 'Mnemonics_Markdown.xlsx' (or your chosen output name from pre-processing) is in the 'QUIZ' subfolder.")
             return None
-        df = pd.read_excel(path, keep_default_na=False) # openpyxl engine needed (add to requirements.txt)
-        required_mnemonics = ['Commercial Name', 'Indication (French Keyword)', 'Mnemonic']
-        if not all(col in df.columns for col in required_mnemonics):
-            st.error(f"Mnemonics XLSX missing required columns. Need: {required_mnemonics}. Found: {list(df.columns)}")
-            return None
+        
+        df = pd.read_excel(path, keep_default_na=False) 
+        
+        # Column names in Mnemonics_Markdown.xlsx should ideally be:
+        # 'Commercial Name', 'Indication (French Keyword)', 'Mnemonic', 'Category' (optional but good for images)
+        # If they are different, adjust the required_cols list and the rename mapping.
+        # This assumes the pre-processing script preserves or creates these names.
+        expected_cols_in_preprocessed_file = ['Commercial Name', 'Indication (French Keyword)', 'Mnemonic']
+        
+        if not all(col in df.columns for col in expected_cols_in_preprocessed_file):
+             st.error(f"Processed mnemonics XLSX ('{path.name}') is missing required columns. "
+                      f"Need at least: {expected_cols_in_preprocessed_file}. Found: {list(df.columns)}")
+             return None
 
+        # Rename columns for consistency within the Streamlit app's logic
         df.rename(columns={'Commercial Name': 'MedicationName',
                            'Indication (French Keyword)': 'IndicationFrench',
-                           'Mnemonic': 'MnemonicText'},
+                           'Mnemonic': 'MnemonicText'}, # 'MnemonicText' now holds the Markdown string
                   inplace=True)
-        # Ensure 'Category' exists, for image lookup compatibility
+
+        # Ensure 'Category' column exists for image lookup, add default if missing
+        # The pre-processing script should ideally carry over or create the 'Category' column.
         if 'Category' not in df.columns:
-            df['Category'] = "Generic Drugs" # Default category if not present
+            # This warning is important if your image lookup relies on category
+            st.warning("No 'Category' column found in the processed mnemonics file. "
+                       "Defaulting to 'Generic Drugs' for image lookup. This might affect image accuracy.")
+            df['Category'] = "Generic Drugs" 
+        
         return df
     except Exception as e:
-        st.error(f"Failed to load/parse mnemonics XLSX: {e}")
-        st.error("Make sure 'openpyxl' is listed in your requirements.txt file for Streamlit Cloud.")
+        st.error(f"Failed to load/parse PROCESSED mnemonics XLSX: {e}")
+        st.error("Ensure 'openpyxl' is listed in your requirements.txt for Streamlit Cloud (still needed for pd.read_excel).")
         return None
 
 # --- Load Image URL Data ---
@@ -84,22 +98,18 @@ def normalize_text(text):
 # --- Get Image URL ---
 def get_image_url(df_images, category, medication_name):
     if df_images.empty or not medication_name or not category: return None
-
     norm_med = normalize_text(medication_name)
     norm_cat = normalize_text(category)
-
     img_row = df_images[
         (df_images['_norm_cat'] == norm_cat) &
         (df_images['_norm_filename'] == norm_med)
     ]
-
     if not img_row.empty:
         return img_row.iloc[0]['raw_url']
     
-    # Fallback: try matching just by medication name
     img_row_med_only = df_images[df_images['_norm_filename'] == norm_med]
     if not img_row_med_only.empty:
-        # st.sidebar.warning(f"Note: Image for '{medication_name}' found by name only (category '{category}' did not yield specific match).")
+        # st.sidebar.warning(f"Note: Image for '{medication_name}' found by name only.") # Optional warning
         return img_row_med_only.iloc[0]['raw_url']
     return None
 
@@ -130,7 +140,6 @@ if __name__ == "__main__":
     df_images = load_image_data(IMAGE_CSV_PATH)
 
     if df_mnemonics_all is None:
-        # Error messages are handled within load_mnemonics_data
         st.stop()
 
     quiz_sections_dict = get_quiz_sections(df_mnemonics_all)
@@ -172,8 +181,11 @@ if __name__ == "__main__":
         if st.session_state.selected_quiz_section_name:
             selected_section_df = quiz_sections_dict.get(st.session_state.selected_quiz_section_name)
             if selected_section_df is not None and not selected_section_df.empty:
-                if 'MedicationName' not in selected_section_df.columns or 'IndicationFrench' not in selected_section_df.columns:
-                    st.sidebar.error("Les données sélectionnées manquent les colonnes 'MedicationName' ou 'IndicationFrench'.")
+                # Check for essential columns after renaming
+                if 'MedicationName' not in selected_section_df.columns or \
+                   'IndicationFrench' not in selected_section_df.columns or \
+                   'MnemonicText' not in selected_section_df.columns:
+                    st.sidebar.error("Les données sélectionnées manquent des colonnes essentielles (MedicationName, IndicationFrench, MnemonicText) après le chargement.")
                     st.session_state.quiz_loaded = False
                 else:
                     st.session_state.current_quiz_df = selected_section_df.sample(frac=1).reset_index(drop=True)
@@ -202,9 +214,10 @@ if __name__ == "__main__":
             question_data_active = df_current_quiz_active.iloc[current_q_idx_active]
             correct_med_name_active = question_data_active['MedicationName']
             correct_indication_active = question_data_active['IndicationFrench']
-            correct_mnemonic_active = question_data_active.get('MnemonicText', "Pas de mnémonique disponible.")
+            # This now comes from the pre-processed file, already containing Markdown
+            correct_mnemonic_with_markdown = question_data_active.get('MnemonicText', "Pas de mnémonique disponible.")
             
-            img_category_active = question_data_active.get('Category', "Generic Drugs")
+            img_category_active = question_data_active.get('Category', "Generic Drugs") # Relies on 'Category' column
             image_url_active = get_image_url(df_images, img_category_active, correct_med_name_active)
 
             q_left_col, q_right_col = st.columns([2, 1])
@@ -212,7 +225,7 @@ if __name__ == "__main__":
             with q_right_col:
                 if st.session_state.feedback_shown.get(current_q_idx_active, False):
                     st.subheader(f"Médicament: {correct_med_name_active}")
-                    display_image(image_url_active, st)
+                    display_image(image_url_active, st) # Pass st or q_right_col
                 else:
                     st.write("_L'image du médicament apparaîtra après la soumission._")
 
@@ -234,7 +247,7 @@ if __name__ == "__main__":
                              if num_to_sample > 0 :
                                 options_list.extend(random.sample(list(wrong_med_names), num_to_sample))
                         
-                        if len(options_list) < 5: # Fallback if not enough diverse indications
+                        if len(options_list) < 5: 
                             fallback_pool_df = df_mnemonics_all[df_mnemonics_all['MedicationName'] != correct_med_name_active]
                             if not fallback_pool_df.empty:
                                 fallback_med_names = fallback_pool_df['MedicationName'].unique()
@@ -243,7 +256,7 @@ if __name__ == "__main__":
                                 if num_fallback_sample > 0:
                                     options_list.extend(random.sample(list(fallback_med_names), num_fallback_sample))
                     
-                    while len(options_list) < 5: # Ensure 5 options with placeholders if necessary
+                    while len(options_list) < 5: 
                         options_list.append(f"Option Placeholder {len(options_list)}")
                     
                     random.shuffle(options_list)
@@ -277,7 +290,7 @@ if __name__ == "__main__":
                         st.success("Correct! ✅")
                     else:
                         st.error(f"Incorrect! ❌ La bonne réponse est : **{correct_med_name_active}**")
-                    st.info(f"💡 Mnémonique: {correct_mnemonic_active}")
+                    st.markdown(f"💡 Mnémonique: {correct_mnemonic_with_markdown}", unsafe_allow_html=False) 
             
             st.markdown("---")
             nav_prev_col, nav_next_col = st.columns(2)
@@ -314,7 +327,7 @@ if __name__ == "__main__":
             if st.button("🏁 Terminer le Quiz et Voir les Résultats", use_container_width=True, disabled=not all_q_attempted):
                 st.session_state.show_result = True
                 st.rerun()
-        else:
+        else: # Invalid question index
             st.warning("Index de question invalide. Redémarrage de la sélection du quiz.")
             st.session_state.question_index = 0
             st.session_state.quiz_loaded = False
@@ -331,8 +344,16 @@ if __name__ == "__main__":
             if i_rev in answers_review and answers_review[i_rev] == df_quiz_review.iloc[i_rev]['MedicationName']:
                 correct_count_review += 1
         
-        incorrect_count_review = len([ans for i, ans in answers_review.items() if i < total_q_review and ans != df_quiz_review.iloc[i]['MedicationName']])
-        unanswered_review = total_q_review - len([i for i in answers_review.keys() if i < total_q_review])
+        incorrect_count_review = 0
+        if total_q_review > 0 : # Avoid issues if df is empty
+            answered_keys = [k for k in answers_review.keys() if k < total_q_review]
+            incorrect_count_review = len([
+                ans for i, ans in answers_review.items() 
+                if i in answered_keys and ans != df_quiz_review.iloc[i]['MedicationName']
+            ])
+            unanswered_review = total_q_review - len(answered_keys)
+        else:
+            unanswered_review = 0
 
 
         stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
@@ -346,12 +367,14 @@ if __name__ == "__main__":
         with res_btn_col_1:
             if st.button("🚀 Recommencer ce Quiz", use_container_width=True):
                 current_section_data = quiz_sections_dict.get(st.session_state.selected_quiz_section_name)
-                if current_section_data is not None:
+                if current_section_data is not None and not current_section_data.empty: # check if data exists
                     st.session_state.current_quiz_df = current_section_data.sample(frac=1).reset_index(drop=True)
-                st.session_state.update({
-                    'question_index': 0, 'answers': {}, 'feedback_shown': {},
-                    'show_result': False, 'current_question_options': {}, 'quiz_loaded': True
-                })
+                    st.session_state.update({
+                        'question_index': 0, 'answers': {}, 'feedback_shown': {},
+                        'show_result': False, 'current_question_options': {}, 'quiz_loaded': True
+                    })
+                else: # Fallback if section data is somehow lost
+                    st.session_state.quiz_loaded = False
                 st.rerun()
         with res_btn_col_2:
             if st.button("⚙️ Changer de Section", use_container_width=True):
@@ -359,6 +382,7 @@ if __name__ == "__main__":
                     'question_index': 0, 'answers': {}, 'feedback_shown': {},
                     'show_result': False, 'current_quiz_df': pd.DataFrame(),
                     'current_question_options': {}, 'quiz_loaded': False
+                    # 'selected_quiz_section_name': None # Optionally reset section
                 })
                 st.rerun()
 
@@ -370,7 +394,7 @@ if __name__ == "__main__":
                     user_ans_detail = answers_review.get(i_detail, "Non Répondu")
                     correct_ans_detail = q_data_detail['MedicationName']
                     is_correct_detail = user_ans_detail == correct_ans_detail
-                    mnemonic_detail = q_data_detail.get('MnemonicText', "Pas de mnémonique disponible.")
+                    mnemonic_with_markdown_detail = q_data_detail.get('MnemonicText', "Pas de mnémonique disponible.")
                     indication_detail = q_data_detail['IndicationFrench']
                     status_icon_detail = "❓"
                     if i_detail in answers_review: status_icon_detail = "✅" if is_correct_detail else "❌"
@@ -388,9 +412,9 @@ if __name__ == "__main__":
                         st.write(f"Votre réponse : **{user_ans_detail}** {status_icon_detail}")
                         if not is_correct_detail and i_detail in answers_review:
                             st.write(f"Bonne réponse : **{correct_ans_detail}**")
-                        elif user_ans_detail == "Non Répondu": # Also show correct answer if unanswered
+                        elif user_ans_detail == "Non Répondu":
                             st.write(f"Bonne réponse : **{correct_ans_detail}**")
-                        st.info(f"💡 Mnémonique: {mnemonic_detail}")
+                        st.markdown(f"💡 Mnémonique: {mnemonic_with_markdown_detail}", unsafe_allow_html=False)
                     st.divider()
 
     elif not st.session_state.quiz_loaded:
